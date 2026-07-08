@@ -1,0 +1,17 @@
+[project]
+name = "one-person-company-discord"
+version = "0.1.0"
+description = "私人 Discord 伺服器上的一人公司：Manager Agent + 工程師/研究員 subagents"
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.0",
+    "claude-agent-sdk",
+    "apscheduler>=3.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
