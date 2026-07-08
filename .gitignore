@@ -1,0 +1,27 @@
+# 紅線：絕不 commit 憑證
+.env
+*.env
+!.env.example
+
+# 工程師 subagent 的工作目錄（僅保留記憶庫 CLAUDE.md）
+workspace/*
+!workspace/CLAUDE.md
+
+# session 逐字稿與 SDK 產物
+.claude/
+*.session.json
+transcripts/
+
+# SQLite 資料庫
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
