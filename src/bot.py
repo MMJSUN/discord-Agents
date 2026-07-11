@@ -9,12 +9,36 @@ import logging
 import time
 
 import discord
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from discord import app_commands
 
 from .budget import BudgetGuard
 from .config import Settings, load_settings
-from .runtime import ManagerRuntime, split_message
+from .runtime import ManagerRuntime, append_note, extract_note, split_message
 from .store import Store
+
+DAILY_REPORT_HOUR = 9  # SPEC §6-M3：每日 09:00 摘要
+
+STATUS_LABELS = {
+    "pending": "⏳ 待批准", "approved": "🟢 已批准", "denied": "❌ 已否決",
+    "expired": "⌛ 已過期", "running": "⚔️ 執行中", "done": "✅ 完成", "failed": "🔴 失敗",
+}
+
+
+def compose_daily_report(tasks: list, cost_today: float, daily_budget: float) -> str:
+    """每日摘要內文；純函式方便測試。"""
+    if not tasks:
+        body = "今日沒有任務。"
+    else:
+        lines = [
+            f"#{t['id']} {STATUS_LABELS.get(t['status'], t['status'])}"
+            f"　${t['cost_usd']:.4f}　{t['description'][:40]}"
+            for t in tasks
+        ]
+        done = sum(1 for t in tasks if t["status"] == "done")
+        body = f"共 {len(tasks)} 個任務（完成 {done}）：\n" + "\n".join(lines)
+    return f"{body}\n\n💰 今日花費 ${cost_today:.4f} / 預算 ${daily_budget:.2f}"
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +153,31 @@ class CompanyBot(discord.Client):
             guild = discord.Object(id=gid)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+
+        # SPEC §6-M3：每日 09:00 摘要（未設 REPORT_CHANNEL_ID 則跳過）
+        if self.settings.report_channel_id:
+            self.scheduler = AsyncIOScheduler()
+            self.scheduler.add_job(self._daily_report, CronTrigger(hour=DAILY_REPORT_HOUR, minute=0))
+            self.scheduler.start()
+            logger.info("每日摘要排程已啟動（%02d:00 → channel %s）",
+                        DAILY_REPORT_HOUR, self.settings.report_channel_id)
+        else:
+            logger.info("未設定 REPORT_CHANNEL_ID，跳過每日摘要排程")
+
+    async def _daily_report(self) -> None:
+        # edge case：排程觸發時斷線/頻道拿不到 → 記 log 不炸排程器，明天照常
+        try:
+            channel = self.get_channel(self.settings.report_channel_id) or await self.fetch_channel(
+                self.settings.report_channel_id
+            )
+            body = compose_daily_report(
+                self.store.tasks_today(), self.store.cost_today(), self.settings.daily_budget_usd
+            )
+            await channel.send(embed=discord.Embed(
+                title="📊 一人公司每日摘要", description=body, colour=discord.Colour.blurple(),
+            ))
+        except Exception:
+            logger.exception("每日摘要發送失敗，明日照常重試")
 
     async def on_ready(self) -> None:
         logger.info("一人公司開張：%s (id=%s)", self.user, self.user.id if self.user else "?")
@@ -264,6 +313,16 @@ class CompanyBot(discord.Client):
 
         for chunk in split_message(reply.text) or ["（任務完成，但 Manager 沒有輸出摘要）"]:
             await channel.send(chunk)
+
+        # SPEC §6-M3：任務結束自動追加踩坑筆記（Manager 回報末段的 📝 段落）
+        note = extract_note(reply.text)
+        try:
+            await append_note(
+                task_id, description,
+                note or f"（Manager 未產出筆記）狀態見任務紀錄，subtype={reply.subtype}",
+            )
+        except OSError:
+            logger.exception("踩坑筆記寫入失敗 task=%d", task_id)
 
         task = self.store.get_task(task_id)
         task_cost = task["cost_usd"] if task else 0.0

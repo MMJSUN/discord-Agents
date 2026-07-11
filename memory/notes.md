@@ -51,3 +51,14 @@
 - **勸導不如城牆**：要 Manager 只調度不動手，光改提示詞不保險——
   在 hooks 加 actor 規則（主線程用 Write/Edit/Bash/Web → deny 並提示改委派），
   違規當下模型收到 deny 理由就會改走 Agent 委派，行為立即矯正。
+
+## 2026-07-12 / M3 記憶與排程
+- **記憶用注入不用工具**：叫 Manager 自己 Read 記憶檔要多燒 Fable 回合；
+  擬計畫時直接把內容夾進 prompt，確定性高又省錢。Memory Bank 取頭部
+  （人工整理重點在前）、踩坑筆記取尾部（append-only 最新在後），方向相反。
+- **筆記靠「回報格式契約」白嫖**：執行提示詞要求回報以「📝 踩坑筆記」收尾，
+  runtime 用 rfind 解析存檔——零額外 API 呼叫。Manager 沒寫就存兜底紀錄。
+- **排程掛在 bot 事件迴圈**：AsyncIOScheduler 要在 setup_hook（loop 已存在）啟動；
+  job 內全包 try/except，斷線時記 log 明天照常，不讓排程器死掉。
+- **notes.md 在 workspace 外是刻意的**：工程師寫不到（路徑閘門），
+  只有 runtime 的單一寫入路徑＋asyncio.Lock 能動它，防並發交錯與 subagent 誤改。

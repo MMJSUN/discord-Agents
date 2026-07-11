@@ -28,7 +28,8 @@
 - [ ] 手動驗收：TASK_BUDGET_USD 暫調 0.01 跑 /task → 必須熔斷並回報成本（董事長）
 
 ## M3 — 記憶與排程
-- [ ] workspace/CLAUDE.md 作為 Memory Bank（任務前先讀）
-- [ ] 任務結束自動追加 memory/notes.md
-- [ ] apscheduler 每日 09:00 摘要至 REPORT_CHANNEL_ID
-- [ ] 第二個任務的計畫引用第一個任務的筆記
+- [x] workspace/CLAUDE.md 作為 Memory Bank（擬計畫時注入，頭部 4000 字截斷）
+- [x] 任務結束自動追加 memory/notes.md（回報末段 📝 解析；無筆記有兜底；鎖防交錯）
+- [x] apscheduler 每日 09:00 摘要至 REPORT_CHANNEL_ID（未設定則跳過；失敗不炸排程）
+- [x] 計畫格式強制「📚 引用經驗」欄位；tests/test_m3.py 全綠（14 tests，2026-07-12）
+- [ ] 手動驗收：連續兩個任務，第二個計畫的 📚 欄引用第一個的筆記（董事長）
