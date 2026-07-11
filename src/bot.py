@@ -150,6 +150,14 @@ class CompanyBot(discord.Client):
             await message.channel.send(f"pong 🏓（{latency_ms} ms）")
             return
 
+        if message.content.strip() == "!reset":
+            self.store.clear_session(message.channel.id)
+            await message.channel.send(
+                "🧹 本頻道 session 已歸零：總經理忘掉這裡的對話史，"
+                "下一句話重新開始（換新任務前用這招可大幅省 token）。"
+            )
+            return
+
         if not message.content.strip():
             return  # 純附件／貼圖等空文字訊息不送 Manager
 

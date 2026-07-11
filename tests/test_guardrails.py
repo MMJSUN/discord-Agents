@@ -237,6 +237,14 @@ def test_session_roundtrip_persists(tmp_path):
     s2.close()
 
 
+def test_clear_session_cuts_resume(store):
+    # !reset：清掉對應後 get_session 回 None → runtime 不帶 resume、開新 session
+    store.set_session(777, "session-abc")
+    store.clear_session(777)
+    assert store.get_session(777) is None
+    store.clear_session(777)  # edge case：重複 reset 不炸
+
+
 def test_cost_today_accumulates(store):
     store.record_cost(0.5, None, "plan")
     store.record_cost(0.25, None, "execute")
