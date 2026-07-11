@@ -7,15 +7,16 @@
 - [x] src/runtime.py：claude-agent-sdk 封裝 + >2000 字自動分段
 - [x] src/bot.py：bot 上線、!ping 回 pong、任一訊息獲 Manager 回覆
 - [x] tests/test_m0.py 全綠（18 passed，2026-07-09）
-- [ ] 手動對話一輪成功（需要 DISCORD_BOT_TOKEN + ANTHROPIC_API_KEY，董事長驗收）
+- [x] 手動對話一輪成功（2026-07-12 董事長驗收通過）
 
 ## M1 — 先勝流程
-- [ ] session 續接（同頻道共享上下文；重啟後 resume 有效）
-- [ ] /task 產生作戰計畫 Embed + 批准/否決按鈕
-- [ ] 批准閘門（未批准前 Write/Edit/Bash 一律 deny）
-- [ ] src/store.py：SQLite sessions/tasks/audit
-- [ ] src/guardrails.py：PreToolUse 黑名單 + PostToolUse 審計
-- [ ] tests/test_guardrails.py 全綠
+- [x] session 續接（SQLite 持久化＋重啟 roundtrip 測試；同頻道共享上下文）
+- [x] /task 產生作戰計畫 Embed + 批准/否決按鈕（含過期與非董事長點擊防禦）
+- [x] 批准閘門（未批准前 Write/Edit/Bash 一律 deny；任務層級不跨任務沿用）
+- [x] src/store.py：SQLite sessions/tasks/costs/audit
+- [x] src/guardrails.py：PreToolUse 黑名單 + PostToolUse 審計（≤200 字摘要）
+- [x] tests/test_guardrails.py 全綠（34 tests，2026-07-12）
+- [ ] 手動驗收：重啟 bot 後同頻道續聊仍記得上下文；/task 跑一輪批准流程（董事長）
 
 ## M2 — 委派與熔斷
 - [ ] 工程師/研究員 subagent 實際被呼叫（審計可見）
