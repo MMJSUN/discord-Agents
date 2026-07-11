@@ -19,7 +19,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from .agents import MANAGER_SYSTEM_PROMPT
+from .agents import MANAGER_SYSTEM_PROMPT, build_subagents
 from .config import WORKSPACE_DIR, Settings
 from .guardrails import NotifyFn, build_hooks
 from .store import Store
@@ -89,18 +89,23 @@ def build_manager_options(
     resume: str | None = None,
     hooks: dict | None = None,
     unlock_write_tools: bool = False,
+    agents: dict | None = None,
+    max_budget_usd: float | None = None,
 ) -> ClaudeAgentOptions:
     """Manager 選項。預設鎖定唯讀；unlock_write_tools 只給已批准的任務執行用。
 
     - permission_mode="dontAsk"：無頭環境沒有 TTY，未核可工具一律拒絕
       （SPEC §5.3：不依賴 SDK 內建互動式人類提問）。
     - setting_sources=[]：不吸收開發環境的 CLAUDE.md / settings。
-    - disallowed_tools：Agent/Task 到 M2 委派功能上線才開；
-      閒聊模式連寫入類一起封死（hooks 之外的第二道鎖）。
+    - 任務執行模式開 Agent（委派）與 Web 工具——Web 工具進 allowed 是為了
+      讓研究員 subagent 的呼叫能自動核可；各 subagent 的能力上限
+      由 AgentDefinition.tools 各自鎖死（SPEC §5.2）。
+    - max_budget_usd：本輪執行的成本上限，超過由 SDK 原生熔斷
+      （subtype=error_max_budget_usd）。
     """
     if unlock_write_tools:
-        allowed = EXEC_TOOLS
-        disallowed = ["Agent", "Task", "WebSearch", "WebFetch"]
+        allowed = EXEC_TOOLS + ["Agent", "WebSearch", "WebFetch"]
+        disallowed: list[str] = []
     else:
         allowed = READ_TOOLS
         disallowed = ["Write", "Edit", "Bash", "NotebookEdit", "Agent", "Task"]
@@ -115,6 +120,8 @@ def build_manager_options(
         setting_sources=[],
         resume=resume,
         hooks=hooks,
+        agents=agents,
+        max_budget_usd=max_budget_usd,
     )
 
 
@@ -135,6 +142,9 @@ EXECUTE_PROMPT_TEMPLATE = """\
 董事長已批准任務 #{task_id}：{description}
 
 請依你剛才提出的作戰計畫開始執行。約束：
+- 【將能而君不御】寫程式／改檔案交給 engineer，查網路資料交給 researcher；
+  委派時在 prompt 內附完整上下文（檔案路徑、錯誤訊息、先前決策）——
+  subagent 看不到你的對話歷史。委派 prompt 保持精簡（<4000 字）。
 - 所有檔案操作僅限目前工作目錄（workspace/）之內。
 - 黑名單指令（rm -rf、sudo、curl|sh、chmod 777、git push --force）會被系統攔截，不要嘗試。
 - 完成後回報：結果摘要、變更的檔案清單、如何驗證、遇到的問題。"""
@@ -145,6 +155,8 @@ class ManagerReply:
     text: str
     cost_usd: float
     session_id: str | None
+    subtype: str | None = None   # ResultMessage.subtype；error_max_budget_usd 等 = 熔斷
+    num_turns: int = 0
 
 
 class ManagerRuntime:
@@ -160,7 +172,10 @@ class ManagerRuntime:
         options = build_manager_options(
             self.settings, resume=self.store.get_session(channel_id), hooks=hooks
         )
-        return await self._run(channel_id, prompt, options)
+        reply = await self._run(channel_id, prompt, options)
+        if reply.cost_usd:
+            self.store.record_cost(reply.cost_usd, None, "chat")  # 閒聊也計入每日預算
+        return reply
 
     async def plan_task(self, channel_id: int, task_id: int, description: str) -> ManagerReply:
         """擬作戰計畫：同頻道 session（Manager 記得脈絡），但工具仍鎖唯讀。"""
@@ -179,14 +194,21 @@ class ManagerRuntime:
         task_id: int,
         description: str,
         notify: NotifyFn | None = None,
+        max_budget_usd: float | None = None,
+        progress: NotifyFn | None = None,
     ) -> ManagerReply:
-        """執行已批准任務：解鎖寫入類工具，批准閘門＋黑名單 hooks 全程把關。"""
-        hooks = build_hooks(self.store, channel_id, task_id=task_id, agent="manager", notify=notify)
+        """執行已批准任務：解鎖寫入類＋Agent 委派，批准閘門＋黑名單＋熔斷全程把關。"""
+        hooks = build_hooks(
+            self.store, channel_id, task_id=task_id, agent="manager",
+            notify=notify, progress=progress,
+        )
         options = build_manager_options(
             self.settings,
             resume=self.store.get_session(channel_id),
             hooks=hooks,
             unlock_write_tools=True,
+            agents=build_subagents(self.settings),
+            max_budget_usd=max_budget_usd,
         )
         prompt = EXECUTE_PROMPT_TEMPLATE.format(task_id=task_id, description=description)
         reply = await self._run(channel_id, prompt, options)
@@ -213,6 +235,9 @@ class ManagerRuntime:
         cost = 0.0
         session_id: str | None = None
 
+        subtype: str | None = None
+        num_turns = 0
+
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -220,6 +245,8 @@ class ManagerRuntime:
                         text_parts.append(block.text)
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id
+                subtype = message.subtype
+                num_turns = message.num_turns or 0
                 if message.total_cost_usd is not None:
                     cost = message.total_cost_usd
                 if not text_parts and message.result:
@@ -227,4 +254,7 @@ class ManagerRuntime:
 
         if session_id:
             self.store.set_session(channel_id, session_id)
-        return ManagerReply(text="\n".join(text_parts).strip(), cost_usd=cost, session_id=session_id)
+        return ManagerReply(
+            text="\n".join(text_parts).strip(), cost_usd=cost,
+            session_id=session_id, subtype=subtype, num_turns=num_turns,
+        )
