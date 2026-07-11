@@ -96,10 +96,34 @@ def test_chat_mode_write_always_denied(store, workspace):
     assert evaluate_tool_call(store, "Bash", {"command": "echo hi"}, None, workspace) is not None
 
 
-def test_approved_write_allowed(store, workspace):
+def test_approved_engineer_write_allowed(store, workspace):
     task_id = store.create_task(123, "寫一個檔案")
     store.set_status(task_id, "approved")
-    assert evaluate_tool_call(store, "Write", {"file_path": "a.txt"}, task_id, workspace) is None
+    assert evaluate_tool_call(
+        store, "Write", {"file_path": "a.txt"}, task_id, workspace, actor="engineer"
+    ) is None
+
+
+def test_manager_hands_on_denied_even_when_approved(store, workspace):
+    # 將能而君不御：批准後 Manager 親自寫檔/查網仍攔截，必須委派
+    task_id = store.create_task(123, "任務")
+    store.set_status(task_id, "approved")
+    write_reason = evaluate_tool_call(
+        store, "Write", {"file_path": "a.txt"}, task_id, workspace, actor="manager"
+    )
+    assert write_reason is not None and "engineer" in write_reason
+    search_reason = evaluate_tool_call(
+        store, "WebSearch", {"query": "discord.py"}, task_id, workspace, actor="manager"
+    )
+    assert search_reason is not None and "researcher" in search_reason
+
+
+def test_researcher_web_tools_allowed(store, workspace):
+    task_id = store.create_task(123, "查資料")
+    store.set_status(task_id, "approved")
+    assert evaluate_tool_call(
+        store, "WebSearch", {"query": "discord.py 最新版"}, task_id, workspace, actor="researcher"
+    ) is None
 
 
 def test_approval_not_reused_across_tasks(store, workspace):
@@ -111,10 +135,12 @@ def test_approval_not_reused_across_tasks(store, workspace):
 
 
 def test_approved_task_still_blocked_by_blacklist(store, workspace):
-    # 黑名單優先於批准：批准過也不准 rm -rf
+    # 黑名單優先於批准：批准過的工程師也不准 rm -rf
     task_id = store.create_task(123, "整理檔案")
     store.set_status(task_id, "approved")
-    reason = evaluate_tool_call(store, "Bash", {"command": "rm -rf ."}, task_id, workspace)
+    reason = evaluate_tool_call(
+        store, "Bash", {"command": "rm -rf ."}, task_id, workspace, actor="engineer"
+    )
     assert reason is not None and "黑名單" in reason
 
 
@@ -158,7 +184,8 @@ async def test_pretooluse_hook_denies_rm_rf(store, workspace):
     pre_hook = hooks["PreToolUse"][0].hooks[0]
 
     result = await pre_hook(
-        {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}, "tool-use-2", None,
+        {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}, "agent_type": "engineer"},
+        "tool-use-2", None,
     )
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert store.recent_audit()[0]["decision"] == "deny"
@@ -171,7 +198,8 @@ async def test_pretooluse_hook_allows_clean_call(store, workspace):
     pre_hook = hooks["PreToolUse"][0].hooks[0]
 
     result = await pre_hook(
-        {"tool_name": "Write", "tool_input": {"file_path": "ok.txt", "content": "hi"}},
+        {"tool_name": "Write", "tool_input": {"file_path": "ok.txt", "content": "hi"},
+         "agent_type": "engineer"},
         "tool-use-3", None,
     )
     assert result == {}  # 放行 = 空 dict，不帶 permissionDecision

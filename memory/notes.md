@@ -45,3 +45,9 @@
 - **閒聊也要入帳**：每日預算若只算任務成本，聊天燒的錢就成了帳外黑洞。
 - **進度轉發要挑工具**：只轉發 Agent/Bash/Write/Edit/Web，Read/Glob/Grep 不轉，
   不然一個任務幾十次讀檔直接洗版頻道。
+- **提示詞殘留會誤導 runtime Manager**：M1 時代 PLAN 模板寫「委派功能未開通」，
+  M2 開通後忘了改 → Manager 據此規劃「一人分飾兩角」。教訓：跨里程碑改功能時，
+  grep 一遍所有 prompt 模板找過時敘述。
+- **勸導不如城牆**：要 Manager 只調度不動手，光改提示詞不保險——
+  在 hooks 加 actor 規則（主線程用 Write/Edit/Bash/Web → deny 並提示改委派），
+  違規當下模型收到 deny 理由就會改走 Agent 委派，行為立即矯正。

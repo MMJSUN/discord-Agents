@@ -21,6 +21,9 @@ from .store import Store
 
 # 需要批准閘門的工具（寫入或執行）
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
+# 將能而君不御：這些工具屬於 subagent 的專業，Manager 主線程親自使用一律攔截
+# （寫檔/指令 → engineer；查網 → researcher）
+MANAGER_DELEGATE_ONLY = WRITE_TOOLS | {"WebSearch", "WebFetch"}
 # 需要路徑檢查的工具及其路徑參數
 PATH_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
               "NotebookEdit": "notebook_path"}
@@ -90,22 +93,31 @@ def evaluate_tool_call(
     tool_input: dict[str, Any],
     task_id: int | None,
     workspace_root: Path | str | None = None,
+    actor: str = "manager",
 ) -> str | None:
-    """回傳 deny 原因；None = 放行。純函式方便測試。"""
+    """回傳 deny 原因；None = 放行。純函式方便測試。
+
+    actor：呼叫者。subagent 呼叫帶自己的名字（engineer/researcher），
+    Manager 主線程是 "manager"。
+    """
     # 1. 先勝閘門：未批准前寫入/執行類一律拒絕
     if tool_name in WRITE_TOOLS and not store.is_approved(task_id):
         return "任務未批准（先勝閘門）：寫入／執行類工具在董事長批准前一律拒絕"
-    # 2. Bash 黑名單（批准了也不准碰紅線）
+    # 2. 將能而君不御：Manager 不得分飾工程師/研究員，親自動手一律攔截
+    if actor == "manager" and tool_name in MANAGER_DELEGATE_ONLY:
+        target = "engineer" if tool_name in WRITE_TOOLS else "researcher"
+        return f"總經理不得親自使用 {tool_name}，請以 Agent 工具委派給 {target}（將能而君不御）"
+    # 3. Bash 黑名單（批准了也不准碰紅線）
     if tool_name == "Bash":
         reason = check_bash_command(str(tool_input.get("command", "")), workspace_root)
         if reason:
             return f"Bash 黑名單：{reason}"
-    # 3. 檔案工具的路徑閘門
+    # 4. 檔案工具的路徑閘門
     param = PATH_TOOLS.get(tool_name)
     if param:
-        target = str(tool_input.get(param, ""))
-        if target and not is_path_allowed(target, workspace_root):
-            return f"目標路徑在 workspace/ 之外：{target}"
+        target_path = str(tool_input.get(param, ""))
+        if target_path and not is_path_allowed(target_path, workspace_root):
+            return f"目標路徑在 workspace/ 之外：{target_path}"
     return None
 
 
@@ -164,7 +176,7 @@ def build_hooks(
         tool_name = str(input_data.get("tool_name", ""))
         tool_input = input_data.get("tool_input") or {}
         actor = _actor(input_data)
-        reason = evaluate_tool_call(store, tool_name, tool_input, task_id, workspace_root)
+        reason = evaluate_tool_call(store, tool_name, tool_input, task_id, workspace_root, actor)
         if reason:
             store.add_audit(channel_id, task_id, actor, tool_name,
                             summarize_params(tool_input), "deny")
