@@ -93,6 +93,11 @@ class Store:
                 (channel_id, session_id, self._now()),
             )
 
+    def clear_session(self, channel_id: int) -> None:
+        """!reset：切斷續接，下一句話開新 session（甩掉累積的上下文成本）。"""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sessions WHERE channel_id=?", (channel_id,))
+
     # ---------- tasks ----------
 
     def create_task(self, channel_id: int, description: str) -> int:
