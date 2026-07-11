@@ -128,6 +128,13 @@ class Store:
         row = self.get_task(task_id)
         return bool(row) and row["status"] in APPROVED_STATUSES
 
+    def tasks_today(self) -> list[sqlite3.Row]:
+        """當日建立的任務（每日摘要用）。"""
+        return self._conn.execute(
+            "SELECT * FROM tasks WHERE created_at LIKE ? ORDER BY id",
+            (f"{self._today()}%",),
+        ).fetchall()
+
     def add_task_cost(self, task_id: int, amount_usd: float) -> None:
         with self._lock, self._conn:
             self._conn.execute(
