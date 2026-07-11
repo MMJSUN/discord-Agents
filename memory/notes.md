@@ -32,3 +32,16 @@
   按伺服器同步（全域同步要等最多 1 小時）。
 - **黑名單用 token 化比純正則穩**：`rm -r -f`、`rm --recursive --force` 這類變體
   拆 token 檢查旗標組合才抓得到；黑名單優先於批准（批准過也不准碰紅線）。
+
+## 2026-07-12 / M2 委派與熔斷
+- **熔斷雙保險設計**：事前把 min(任務剩餘, 每日剩餘) 餵給 SDK 的 `max_budget_usd`
+  （原生中止，subtype=`error_max_budget_usd`）；事後 ResultMessage 實際成本入帳。
+  單靠事後對帳會超支一整輪，單靠 SDK 又管不到跨輪累計。
+- **subagent 的工具呼叫流經同一組 hooks**：靠 hook 輸入的 `agent_type` 欄位歸戶
+  （主線程沒有這欄位 = manager）。黑名單/路徑閘門因此天然覆蓋工程師。
+- **subagent 的 Web 工具要進 Manager 的 allowed_tools**：`allowed_tools` 是
+  session 全域的自動核可清單，研究員的 WebSearch 不在裡面就會被 dontAsk 拒絕；
+  能力上限則由各 AgentDefinition.tools 鎖死，兩層是不同的東西。
+- **閒聊也要入帳**：每日預算若只算任務成本，聊天燒的錢就成了帳外黑洞。
+- **進度轉發要挑工具**：只轉發 Agent/Bash/Write/Edit/Web，Read/Glob/Grep 不轉，
+  不然一個任務幾十次讀檔直接洗版頻道。

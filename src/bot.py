@@ -11,6 +11,7 @@ import time
 import discord
 from discord import app_commands
 
+from .budget import BudgetGuard
 from .config import Settings, load_settings
 from .runtime import ManagerRuntime, split_message
 from .store import Store
@@ -19,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 APPROVAL_TIMEOUT_SECONDS = 3600  # 計畫卡等待批准的時效
 EMBED_DESCRIPTION_LIMIT = 4000   # Discord Embed description 上限 4096，留餘裕
+
+
+def _red_alert_embed(title: str, description: str) -> discord.Embed:
+    """SPEC §5.4：熔斷警報統一用紅色 Embed。"""
+    return discord.Embed(title=f"🔴 {title}", description=description, colour=discord.Colour.red())
 
 
 def is_authorized(
@@ -109,6 +115,7 @@ class CompanyBot(discord.Client):
         self.settings = settings
         self.store = Store()
         self.runtime = ManagerRuntime(settings, self.store)
+        self.budget = BudgetGuard(settings, self.store)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
@@ -179,6 +186,14 @@ class CompanyBot(discord.Client):
             await interaction.response.send_message("任務描述不能是空的。", ephemeral=True)
             return
 
+        # SPEC §5.4：每日預算用罄 → 唯讀模式（可聊天、拒 /task）
+        readonly_reason = self.budget.check_can_start_task()
+        if readonly_reason:
+            await interaction.response.send_message(
+                embed=_red_alert_embed("每日預算熔斷", readonly_reason)
+            )
+            return
+
         await interaction.response.defer(thinking=True)
         task_id = self.store.create_task(interaction.channel_id, content)
         try:
@@ -205,26 +220,57 @@ class CompanyBot(discord.Client):
         view.message = await interaction.followup.send(embed=embed, view=view)
 
     async def run_task(self, channel: discord.abc.Messageable, task_id: int, description: str) -> None:
+        # 開跑前再驗一次預算（批准可能發生在預算燒完之後）
+        readonly_reason = self.budget.check_can_start_task()
+        if readonly_reason:
+            self.store.set_status(task_id, "failed")
+            await channel.send(embed=_red_alert_embed("每日預算熔斷", readonly_reason))
+            return
+        run_budget = self.budget.max_budget_for_run(task_id)
+        if run_budget <= 0:
+            self.store.set_status(task_id, "failed")
+            await channel.send(embed=_red_alert_embed(
+                "任務預算熔斷",
+                f"任務 #{task_id} 預算已用罄（已花 ${self.budget.task_spent(task_id):.4f} / "
+                f"上限 ${self.settings.task_budget_usd:.2f}）。",
+            ))
+            return
+
         self.store.set_status(task_id, "running")
-        await channel.send(f"⚔️ 任務 #{task_id} 開始執行……")
+        await channel.send(f"⚔️ 任務 #{task_id} 開始執行（本輪成本上限 ${run_budget:.2f}）……")
 
         async def notify(text: str) -> None:
             await channel.send(text)
 
         channel_id = getattr(channel, "id", 0)
         try:
-            reply = await self.runtime.execute_task(channel_id, task_id, description, notify)
+            reply = await self.runtime.execute_task(
+                channel_id, task_id, description, notify,
+                max_budget_usd=run_budget, progress=notify,
+            )
         except Exception:
             logger.exception("任務執行失敗 task=%d", task_id)
             self.store.set_status(task_id, "failed")
             await channel.send(f"🔴 任務 #{task_id} 執行失敗（API 重試 3 次後仍失敗）。")
             return
 
-        self.store.set_status(task_id, "done")
         for chunk in split_message(reply.text) or ["（任務完成，但 Manager 沒有輸出摘要）"]:
             await channel.send(chunk)
+
         task = self.store.get_task(task_id)
         task_cost = task["cost_usd"] if task else 0.0
+        breaker = self.budget.describe_breaker(reply.subtype)
+        if breaker:
+            # SPEC §5.4：任一熔斷觸發 → 紅色警報 Embed（含已花費金額與進度）
+            self.store.set_status(task_id, "failed")
+            await channel.send(embed=_red_alert_embed(
+                "熔斷觸發",
+                f"任務 #{task_id}：{breaker}\n"
+                f"已執行 {reply.num_turns} 回合，本次花費 ${reply.cost_usd:.4f}，"
+                f"任務累計 ${task_cost:.4f}。\n上方訊息是中止前的最後進度。",
+            ))
+        else:
+            self.store.set_status(task_id, "done")
         await channel.send(
             f"💰 任務 #{task_id} 成本 ${task_cost:.4f}｜今日累計 ${self.store.cost_today():.4f}"
         )

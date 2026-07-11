@@ -118,6 +118,26 @@ def summarize_params(tool_input: dict[str, Any]) -> str:
 
 NotifyFn = Callable[[str], Awaitable[None]]
 
+# 值得回報頻道的「關鍵進度」工具（SPEC §5.1：工具呼叫摘要，不逐 token 洗版）
+PROGRESS_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash",
+                  "Agent", "Task", "WebSearch", "WebFetch"}
+
+
+def progress_line(agent: str, tool_name: str, tool_input: dict[str, Any]) -> str:
+    """一行式進度摘要，回報到 Discord 頻道。"""
+    if tool_name in ("Agent", "Task"):
+        target = tool_input.get("subagent_type", "?")
+        brief = str(tool_input.get("description") or tool_input.get("prompt") or "")[:60]
+        return f"🤝 {agent} 委派給 **{target}**：{brief}"
+    if tool_name == "Bash":
+        return f"🔧 {agent} 執行指令：`{str(tool_input.get('command', ''))[:80]}`"
+    if tool_name in PATH_TOOLS:
+        return f"📝 {agent} {tool_name}：`{str(tool_input.get(PATH_TOOLS[tool_name], ''))[:80]}`"
+    if tool_name in ("WebSearch", "WebFetch"):
+        target = tool_input.get("query") or tool_input.get("url") or ""
+        return f"🔍 {agent} {tool_name}：{str(target)[:80]}"
+    return f"⚙️ {agent} 使用 {tool_name}"
+
 
 def build_hooks(
     store: Store,
@@ -126,22 +146,30 @@ def build_hooks(
     agent: str = "manager",
     notify: NotifyFn | None = None,
     workspace_root: Path | str | None = None,
+    progress: NotifyFn | None = None,
 ) -> dict[str, list[HookMatcher]]:
     """組出掛進 ClaudeAgentOptions.hooks 的設定。
 
     task_id=None 代表閒聊模式：寫入類工具永遠 deny。
     notify：deny 時回報 Discord 頻道（SPEC §5.1 先勝閘門需回報）。
+    progress：關鍵工具呼叫的一行摘要（委派、寫檔、指令），回報執行進度。
+    subagent 的工具呼叫也會流經同一組 hooks，靠 agent_type 欄位歸戶。
     """
+
+    def _actor(input_data: dict) -> str:
+        # subagent 內的呼叫帶 agent_type（如 engineer/researcher）；主線程沒有 → manager
+        return str(input_data.get("agent_type") or agent)
 
     async def pre_tool_use(input_data: dict, tool_use_id: str | None, context: Any) -> dict:
         tool_name = str(input_data.get("tool_name", ""))
         tool_input = input_data.get("tool_input") or {}
+        actor = _actor(input_data)
         reason = evaluate_tool_call(store, tool_name, tool_input, task_id, workspace_root)
         if reason:
-            store.add_audit(channel_id, task_id, agent, tool_name,
+            store.add_audit(channel_id, task_id, actor, tool_name,
                             summarize_params(tool_input), "deny")
             if notify:
-                await notify(f"🛡️ 已攔截 `{tool_name}`：{reason}")
+                await notify(f"🛡️ 已攔截 `{tool_name}`（{actor}）：{reason}")
             return {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -149,12 +177,14 @@ def build_hooks(
                     "permissionDecisionReason": reason,
                 }
             }
+        if progress and tool_name in PROGRESS_TOOLS:
+            await progress(progress_line(actor, tool_name, tool_input))
         return {}
 
     async def post_tool_use(input_data: dict, tool_use_id: str | None, context: Any) -> dict:
         # SPEC §5.3：所有實際執行的工具呼叫都留審計
         store.add_audit(
-            channel_id, task_id, agent,
+            channel_id, task_id, _actor(input_data),
             str(input_data.get("tool_name", "")),
             summarize_params(input_data.get("tool_input") or {}),
             "allow",

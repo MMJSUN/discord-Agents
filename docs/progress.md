@@ -19,10 +19,13 @@
 - [ ] 手動驗收：重啟 bot 後同頻道續聊仍記得上下文；/task 跑一輪批准流程（董事長）
 
 ## M2 — 委派與熔斷
-- [ ] 工程師/研究員 subagent 實際被呼叫（審計可見）
-- [ ] src/budget.py：單任務成本 / 每日總額熔斷
-- [ ] TASK_BUDGET_USD=0.01 驗收熔斷
-- [ ] 工程師產出檔案僅出現在 workspace/
+- [x] 工程師/研究員 subagent 接上任務執行（Agent 工具開通；審計以 agent_type 歸戶）
+- [x] src/budget.py：單任務成本 / 每日總額熔斷（本輪上限 = min(任務剩餘, 每日剩餘)）
+- [x] 每日超額唯讀模式（可聊天、拒 /task、00:00 重置）＋熔斷紅色警報 Embed
+- [x] 關鍵工具進度轉發頻道（委派/寫檔/指令/查網，不含 Read 避免洗版）
+- [x] 工程師產出僅限 workspace/（路徑閘門＋cwd 鎖定＋越界測試）
+- [x] tests/test_budget.py 全綠（11 tests；全套 63 tests，2026-07-12）
+- [ ] 手動驗收：TASK_BUDGET_USD 暫調 0.01 跑 /task → 必須熔斷並回報成本（董事長）
 
 ## M3 — 記憶與排程
 - [ ] workspace/CLAUDE.md 作為 Memory Bank（任務前先讀）
