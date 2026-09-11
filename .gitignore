@@ -1,5 +1,6 @@
-# 紅線：絕不 commit 憑證
+# 紅線：絕不 commit 憑證（含 .env.local / .env.production 等變體）
 .env
+.env.*
 *.env
 !.env.example
 
