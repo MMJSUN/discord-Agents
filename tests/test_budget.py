@@ -151,8 +151,9 @@ async def test_denied_subagent_call_blocked_and_attributed(store, tmp_path):
     hooks = build_hooks(store, 7, task_id, "manager", None, ws)
     pre_hook = hooks["PreToolUse"][0].hooks[0]
 
+    outside = str(tmp_path / "outside" / "evil.txt")  # workspace 外的絕對路徑（跨平台）
     result = await pre_hook(
-        {"tool_name": "Write", "tool_input": {"file_path": "C:/Windows/evil.txt"},
+        {"tool_name": "Write", "tool_input": {"file_path": outside},
          "agent_type": "engineer"},
         "t4", None,
     )
