@@ -62,8 +62,9 @@ def test_blacklist_rules(cmd, expected_hit):
     assert (check_bash_command(cmd) is not None) == expected_hit
 
 
-def test_bash_redirect_outside_workspace_denied(workspace):
-    assert check_bash_command(r"echo pwned > C:\Windows\evil.txt", workspace) is not None
+def test_bash_redirect_outside_workspace_denied(workspace, tmp_path):
+    outside = tmp_path / "outside" / "evil.txt"  # workspace 外的絕對路徑（跨平台）
+    assert check_bash_command(f"echo pwned > {outside}", workspace) is not None
     assert check_bash_command("echo ok > result.txt", workspace) is None  # 相對路徑在 workspace 內
 
 
@@ -75,10 +76,10 @@ def test_path_inside_workspace_allowed(workspace):
     assert is_path_allowed(str(workspace / "sub" / "a.py"), workspace)
 
 
-def test_path_escape_denied(workspace):
+def test_path_escape_denied(workspace, tmp_path):
     # edge case：.. 穿越與絕對路徑逃逸
     assert not is_path_allowed("../outside.txt", workspace)
-    assert not is_path_allowed(r"C:\Windows\System32\hosts", workspace)
+    assert not is_path_allowed(str(tmp_path / "outside" / "hosts"), workspace)
     assert not is_path_allowed("sub/../../escape.txt", workspace)
 
 
